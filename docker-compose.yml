@@ -3,53 +3,52 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: image-hosting-backend
-    ports:
-      - "8000:8000"  # Проброс порта для прямого доступа к бэкенду (для отладки)
     volumes:
-      - images:/app/images  # Монтируем volume для изображений
-      - logs:/app/logs      # Монтируем volume для логов
+      - images:/app/images # Монтируем volume для изображений
+      - logs:/app/logs     # Монтируем volume для логов
+      - ./backups:/app/backups # Локальная папка для резервных копий внутри контейнера
     environment:
-      - PYTHONUNBUFFERED=1
-      - PYTHONDONTWRITEBYTECODE=1
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    networks:
-      - app-network
+      - DB_NAME=images_db
+      - DB_USER=postgres
+      - DB_PASSWORD=password
+      - DB_HOST=db
+      - DB_PORT=5432
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: always # Автоматический перезапуск при сбое
 
   nginx:
-    image: nginx:1.25-alpine
-    container_name: image-hosting-nginx
+    image: nginx:latest # Используем официальный образ Nginx
     ports:
-      - "8080:80"  # Nginx будет доступен на порту 8080 хост-машины
+      - "8080:80" # Nginx будет доступен на порту 8080 хост-машины
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro  # Монтируем наш nginx.conf
-      - images:/app/images:ro  # Монтируем volume с изображениями в Nginx (только для чтения)
-      - ./static:/app/static:ro  # Монтируем статические файлы для Nginx (только для чтения)
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro # Монтируем наш nginx.conf
+      - images:/app/images:ro # Монтируем volume с изображениями в Nginx (только для чтения)
+      - ./static:/app/static:ro # Монтируем статические файлы для Nginx (только для чтения)
     depends_on:
       app:
-        condition: service_healthy
-    restart: unless-stopped
+        condition: service_started # Ждем старта app (сам app уже ждёт здоровую БД)
+    restart: always
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: images_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5433:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    restart: always
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    networks:
-      - app-network
+      test: ["CMD-SHELL", "pg_isready -U postgres -d images_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
-  images:  # Определяем volume для изображений
-    driver: local
-  logs:    # Определяем volume для логов
-    driver: local
-
-networks:
-  app-network:
-    driver: bridge
+  images: # Определяем volume для изображений
+  logs:   # Определяем volume для логов
+  db_data: # Данные PostgreSQL
