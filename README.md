@@ -26,8 +26,7 @@
 ```bash
 # Клонируйте репозиторий
 git clone <repository-url>
-cd image-hosting-frontend-1
-
+cd images-server3
 # Запустите проект одной командой
 docker compose up --build
 ```
@@ -193,3 +192,114 @@ MIT License
 2. Убедитесь, что порты 8000 и 8080 свободны
 
 Проект создан при помощи JavaRush school 
+ 
+## 🗄️ База данных и SQL (PostgreSQL)
+
+### Параметры подключения
+
+- **СУБД**: PostgreSQL 16
+- **База**: `images_db`
+- **Пользователь**: `postgres`
+- **Пароль**: `password`
+- **Хост (в контейнерах)**: `db:5432`
+- **Хост (с хоста)**: `localhost:5433`
+
+Эти значения можно переопределить переменными окружения в `docker-compose.yml`: `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`.
+
+### Подключение к БД
+
+- С хост-машины (нужен установленный `psql`):
+```bash
+psql -h localhost -p 5433 -U postgres -d images_db
+```
+
+- Из контейнера БД:
+```bash
+docker compose exec -e PGPASSWORD=password db psql -U postgres -d images_db
+```
+
+### Инициализация схемы
+
+Схема создаётся автоматически приложением при старте. Для ручного запуска выполните:
+```sql
+CREATE TABLE IF NOT EXISTS images (
+  id SERIAL PRIMARY KEY,
+  filename TEXT NOT NULL,
+  original_name TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  upload_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  file_type TEXT NOT NULL
+);
+```
+
+Рекомендуемые индексы (опционально для ускорения сортировки и поиска):
+```sql
+CREATE INDEX IF NOT EXISTS idx_images_upload_time ON images (upload_time DESC);
+CREATE INDEX IF NOT EXISTS idx_images_file_type ON images (file_type);
+```
+
+### Часто используемые SQL-запросы
+
+- Вставка метаданных изображения:
+```sql
+INSERT INTO images (filename, original_name, size, file_type)
+VALUES ('<generated>.png', 'source.png', 123456, 'png')
+RETURNING id;
+```
+
+- Список с пагинацией (10 на страницу):
+```sql
+-- page = 1 -> OFFSET 0, page = 2 -> OFFSET 10 и т.д.
+SELECT id, filename, original_name, size, upload_time, file_type
+FROM images
+ORDER BY upload_time DESC
+LIMIT 10 OFFSET 0;
+```
+
+- Подсчёт общего количества:
+```sql
+SELECT COUNT(*) AS cnt FROM images;
+```
+
+- Удаление по `id`:
+```sql
+DELETE FROM images WHERE id = $1; -- подставьте нужный id
+```
+
+### Резервное копирование и восстановление
+
+- Бэкап в файл на хосте (stdout из контейнера БД перенаправляем в файл):
+```bash
+docker compose exec db pg_dump -U postgres -d images_db > backups/backup_$(date +%F_%H-%M-%S).sql
+```
+
+- Восстановление из файла на хосте:
+```bash
+cat backups/backup_YYYY-MM-DD_HH-MM-SS.sql | docker compose exec -T db psql -U postgres -d images_db
+```
+
+- Бэкап конкретной таблицы:
+```bash
+docker compose exec db pg_dump -U postgres -d images_db -t images > backups/images_$(date +%F_%H-%M-%S).sql
+```
+
+### Обслуживание
+
+- Просмотр активных подключений:
+```sql
+SELECT pid, usename, application_name, state, query
+FROM pg_stat_activity
+ORDER BY state;
+```
+
+- Анализ и актуализация статистики:
+```sql
+ANALYZE;
+```
+
+- Очистка свободного места (в простых сценариях):
+```sql
+VACUUM;
+```
+
+Примечание: команды `VACUUM FULL` и т.п. выполняйте осознанно, так как они могут блокировать таблицы.
