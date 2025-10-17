@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "C/C++ Runner: Debug Session",
+      "type": "lldb",
+      "request": "launch",
+      "args": [],
+      "cwd": "/Users/daniil20101008mail.com/Desktop/imeges_server3",
+      "program": "/Users/daniil20101008mail.com/Desktop/imeges_server3/build/Debug/outDebug"
+    }
+  ]
+}

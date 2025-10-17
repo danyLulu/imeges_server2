@@ -21,7 +21,7 @@ services:
   nginx:
     image: nginx:latest # Используем официальный образ Nginx
     ports:
-      - "8080:80" # Nginx будет доступен на порту 8080 хост-машины
+      - "8081:80" # Nginx будет доступен на порту 8081 хост-машины
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro # Монтируем наш nginx.conf
       - images:/app/images:ro # Монтируем volume с изображениями в Nginx (только для чтения)

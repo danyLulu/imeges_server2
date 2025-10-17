@@ -1,4 +1,4 @@
-"""Основной модуль приложения."""
+"""Модуль приложения для хостинга изображений."""
 
 import http.server
 import re
@@ -153,70 +153,34 @@ class ImageHostingHandler(http.server.BaseHTTPRequestHandler):
                     rows = cursor.fetchall()
         except Exception as e:
             logging.error(f"Ошибка при получении списка изображений: {e}")
-            self._set_headers(500, 'text/html; charset=utf-8')
-            self.wfile.write("<h1>Ошибка сервера</h1>".encode('utf-8'))
+            self._set_headers(500, 'application/json')
+            self.wfile.write(json.dumps({"status": "error", "message": "Ошибка сервера"}).encode('utf-8'))
             return
 
-        has_prev = page > 1
-        has_next = offset + per_page < total
+        # Преобразуем datetime в строки для JSON
+        for row in rows:
+            if 'upload_time' in row and row['upload_time']:
+                row['upload_time'] = row['upload_time'].isoformat()
+            if 'size' in row:
+                row['size_kb'] = int(row['size']) // 1024
 
-        html = [
-            "<!DOCTYPE html>",
-            "<html lang=\"ru\">",
-            "<head>",
-            "<meta charset=\"UTF-8\">",
-            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">",
-            "<title>Список изображений</title>",
-            "<link rel=\"stylesheet\" href=\"/style.css\">",
-            "</head>",
-            "<body>",
-            "<div style=\"max-width:1000px;margin:20px auto;padding:16px;background:#fff;border-radius:8px;\">",
-            "<h1 style=\"margin-bottom:16px;\">Список изображений</h1>",
-            ("<p>Нет загруженных изображений</p>" if total == 0 else
-             "<table style=\"width:100%;border-collapse:collapse;\">"
-             "<thead><tr>"
-             "<th style=\"text-align:left;border-bottom:1px solid #dee2e6;padding:8px;\">Имя файла</th>"
-             "<th style=\"text-align:left;border-bottom:1px solid #dee2e6;padding:8px;\">Оригинальное имя</th>"
-             "<th style=\"text-align:left;border-bottom:1px solid #dee2e6;padding:8px;\">Размер (КБ)</th>"
-             "<th style=\"text-align:left;border-bottom:1px solid #dee2e6;padding:8px;\">Дата загрузки</th>"
-             "<th style=\"text-align:left;border-bottom:1px solid #dee2e6;padding:8px;\">Тип</th>"
-             "<th style=\"text-align:left;border-bottom:1px solid #dee2e6;padding:8px;\"></th>"
-             "</tr></thead><tbody>")
-        ]
+        response = {
+            "status": "success",
+            "data": {
+                "images": rows,
+                "pagination": {
+                    "total": total,
+                    "page": page,
+                    "per_page": per_page,
+                    "has_prev": page > 1,
+                    "has_next": offset + per_page < total,
+                    "total_pages": (total + per_page - 1) // per_page
+                }
+            }
+        }
 
-        for r in rows:
-            html.append(
-                f"<tr>"
-                f"<td style=\"padding:8px;border-bottom:1px solid #f1f1f1;\"><a href=\"/images/{r['filename']}\" target=\"_blank\">{r['filename']}</a></td>"
-                f"<td style=\"padding:8px;border-bottom:1px solid #f1f1f1;\">{r['original_name']}</td>"
-                f"<td style=\"padding:8px;border-bottom:1px solid #f1f1f1;\">{int(r['size']) // 1024}</td>"
-                f"<td style=\"padding:8px;border-bottom:1px solid #f1f1f1;\">{r['upload_time']}</td>"
-                f"<td style=\"padding:8px;border-bottom:1px solid #f1f1f1;\">{r['file_type']}</td>"
-                f"<td style=\"padding:8px;border-bottom:1px solid #f1f1f1;\">"
-                f"<a href=\"/delete/{r['id']}\" style=\"color:#dc3545;\" onclick=\"return confirm('Удалить изображение?');\">Удалить</a>"
-                f"</td>"
-                f"</tr>"
-            )
-
-        if total > 0:
-            html.append("</tbody></table>")
-
-        # Навигация
-        nav = ["<div style=\"margin-top:16px;display:flex;gap:8px;\">"]
-        if has_prev:
-            nav.append(f"<a href=\"/images-list?page={page-1}\" style=\"padding:8px 12px;border:1px solid #dee2e6;border-radius:4px;text-decoration:none;\">Предыдущая страница</a>")
-        else:
-            nav.append("<span style=\"padding:8px 12px;color:#6c757d;border:1px solid #eee;border-radius:4px;\">Предыдущая страница</span>")
-        if has_next:
-            nav.append(f"<a href=\"/images-list?page={page+1}\" style=\"padding:8px 12px;border:1px solid #dee2e6;border-radius:4px;text-decoration:none;\">Следующая страница</a>")
-        else:
-            nav.append("<span style=\"padding:8px 12px;color:#6c757d;border:1px solid #eee;border-radius:4px;\">Следующая страница</span>")
-        nav.append("</div>")
-        html.extend(nav)
-        html.append("</div></body></html>")
-
-        self._set_headers(200, 'text/html; charset=utf-8')
-        self.wfile.write("".join(html).encode('utf-8'))
+        self._set_headers(200, 'application/json')
+        self.wfile.write(json.dumps(response).encode('utf-8'))
 
     def handle_delete(self, image_id: int):
         filename = None
@@ -232,7 +196,7 @@ class ImageHostingHandler(http.server.BaseHTTPRequestHandler):
                     filename = row['filename']
                     cursor.execute("DELETE FROM images WHERE id = %s", (image_id,))
                     conn.commit()
-            # Удаляем файл с диска
+            
             if filename:
                 try:
                     os.remove(os.path.join(UPLOAD_DIR, filename))
@@ -245,7 +209,6 @@ class ImageHostingHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write("Ошибка сервера при удалении".encode('utf-8'))
             return
 
-        # Редирект обратно на список
         self.send_response(303)
         self.send_header('Location', '/images-list')
         self.end_headers()
@@ -270,162 +233,136 @@ class ImageHostingHandler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed_path = urlparse(self.path)
-        if parsed_path.path == '/upload':
-            # 1. Получаем заголовок Content-Type
-            content_type_header = self.headers.get('Content-Type')
-            if not content_type_header or not content_type_header.startswith('multipart/form-data'):
-                logging.warning("Действие: Ошибка загрузки - некорректный Content-Type.")
-                self._set_headers(400, 'application/json')
-                response = {"status": "error", "message": "Ожидается multipart/form-data."}
-                self.wfile.write(json.dumps(response).encode('utf-8'))
-                return
-
-            # 2. Извлекаем boundary из Content-Type
-            try:
-                boundary = content_type_header.split('boundary=')[1].encode('utf-8')
-            except IndexError:
-                logging.warning("Действие: Ошибка загрузки - boundary не найден в Content-Type.")
-                self._set_headers(400, 'application/json')
-                response = {"status": "error", "message": "Boundary не найден."}
-                self.wfile.write(json.dumps(response).encode('utf-8'))
-                return
-
-            # 3. Читаем тело запроса
-            try:
-                content_length = int(self.headers['Content-Length'])
-                if content_length > MAX_FILE_SIZE * 2:  # Небольшой запас на служебную информацию multipart
-                    logging.warning(
-                        f"Действие: Ошибка загрузки - запрос превышает максимальный размер ({content_length} байт).")
-                    self._set_headers(413, 'application/json')  # Payload Too Large
-                    response = {"status": "error", "message": f"Запрос слишком большой."}
-                    self.wfile.write(json.dumps(response).encode('utf-8'))
-                    return
-
-                raw_body = self.rfile.read(content_length)
-            except (TypeError, ValueError):
-                logging.error("Ошибка: Некорректный Content-Length.")
-                self._set_headers(411, 'application/json')  # Length Required
-                response = {"status": "error", "message": "Некорректный Content-Length."}
-                self.wfile.write(json.dumps(response).encode('utf-8'))
-                return
-            except Exception as e:
-                logging.error(f"Ошибка при чтении тела запроса: {e}")
-                self._set_headers(500, 'application/json')
-                response = {"status": "error", "message": "Ошибка при чтении запроса."}
-                self.wfile.write(json.dumps(response).encode('utf-8'))
-                return
-
-            # 4. Парсим multipart/form-data (упрощенно, только для одного файла)
-            parts = raw_body.split(b'--' + boundary)
-            file_data = None
-            filename = None
-
-            for part in parts:
-                if b'Content-Disposition: form-data;' in part and b'filename=' in part:
-                    try:
-                        headers_end = part.find(b'\r\n\r\n')
-                        headers_str = part[0:headers_end].decode('utf-8')
-
-                        # Извлекаем имя файла
-                        filename_match = re.search(r'filename="([^"]+)"', headers_str)
-                        if filename_match:
-                            filename = filename_match.group(1)
-
-                        # Извлекаем данные файла
-                        file_data = part[headers_end + 4:].strip()  # +4 для \r\n\r\n
-                        break
-                    except Exception as e:
-                        logging.error(f"Ошибка при парсинге части multipart: {e}")
-                        continue
-
-            if not file_data or not filename:
-                logging.warning(f"Действие: Ошибка загрузки - файл не найден в multipart-запросе.")
-                self._set_headers(400, 'application/json')
-                response = {"status": "error", "message": "Файл не найден в запросе."}
-                self.wfile.write(json.dumps(response).encode('utf-8'))
-                return
-
-            # Теперь у нас есть filename (строка) и file_data (bytes)
-            # 5. Проверки файла
-            file_size = len(file_data)
-            file_extension = os.path.splitext(filename)[1].lower()
-
-            if file_extension not in ALLOWED_EXTENSIONS:
-                logging.warning(f"Действие: Ошибка загрузки - неподдерживаемый формат файла ({filename})")
-                self._set_headers(400, 'application/json')
-                response = {"status": "error",
-                            "message": f"Неподдерживаемый формат файла. Допустимы: {', '.join(ALLOWED_EXTENSIONS)}"}
-                self.wfile.write(json.dumps(response).encode('utf-8'))
-                return
-
-            if file_size > MAX_FILE_SIZE:
-                logging.warning(
-                    f"Действие: Ошибка загрузки - файл превышает максимальный размер ({filename}, {file_size} байт)")
-                self._set_headers(400, 'application/json')
-                response = {"status": "error",
-                            "message": f"Файл превышает максимальный размер {MAX_FILE_SIZE / (1024 * 1024):.0f}MB."}
-                self.wfile.write(json.dumps(response).encode('utf-8'))
-                return
-
-            # 6. Сохранение файла
-            unique_filename = f"{uuid.uuid4().hex}{file_extension}"
-            target_path = os.path.join(UPLOAD_DIR, unique_filename)
-
-            try:
-                # Сначала сохраняем файл на диск
-                with open(target_path, 'wb') as f:
-                    f.write(file_data)
-
-                # Затем сохраняем метаданные в БД
-                try:
-                    with get_db_connection() as conn:
-                        with conn.cursor() as cursor:
-                            cursor.execute(
-                                """
-                                INSERT INTO images (filename, original_name, size, file_type)
-                                VALUES (%s, %s, %s, %s)
-                                RETURNING id
-                                """,
-                                (unique_filename, filename, file_size, file_extension.lstrip('.')),
-                            )
-                            new_id = cursor.fetchone()[0]
-                            conn.commit()
-                    file_url = f"/images/{unique_filename}"
-                    logging.info(
-                        f"Действие: Изображение '{filename}' (сохранено как '{unique_filename}') и метаданные записаны в БД (id={new_id}).")
-                    self._set_headers(200, 'application/json')
-                    response = {
-                        "status": "success",
-                        "message": "Файл успешно загружен.",
-                        "filename": unique_filename,
-                        "url": file_url,
-                        "id": new_id,
-                        "original_name": filename,
-                        "size": file_size,
-                        "file_type": file_extension.lstrip('.')
-                    }
-                    self.wfile.write(json.dumps(response).encode('utf-8'))
-                except Exception as db_err:
-                    # Откатываем сохранение файла, если БД не записалась
-                    try:
-                        os.remove(target_path)
-                    except Exception:
-                        pass
-                    logging.error(f"Ошибка записи метаданных в БД: {db_err}")
-                    self._set_headers(500, 'application/json')
-                    response = {"status": "error", "message": "Ошибка сохранения метаданных в БД."}
-                    self.wfile.write(json.dumps(response).encode('utf-8'))
-
-            except Exception as e:
-                logging.error(f"Ошибка при сохранении файла '{filename}' в '{target_path}': {e}")
-                self._set_headers(500, 'application/json')
-                response = {"status": "error", "message": "Произошла ошибка при сохранении файла."}
-                self.wfile.write(json.dumps(response).encode('utf-8'))
-        else:
-            # Если POST запрос пришел не на /upload, то это неизвестный путь
-            logging.warning(f"Действие: Неизвестный POST запрос на: {self.path}")
+        if parsed_path.path != '/upload':
+            logging.warning(f"Неизвестный POST запрос на: {self.path}")
             self._set_headers(404, 'text/plain')
             self.wfile.write(b"404 Not Found")
+            return
+            
+        # Проверка Content-Type
+        content_type_header = self.headers.get('Content-Type', '')
+        if not content_type_header.startswith('multipart/form-data'):
+            self._send_error(400, "Ожидается multipart/form-data")
+            return
+
+        # Извлечение boundary
+        try:
+            boundary = content_type_header.split('boundary=')[1].encode('utf-8')
+        except IndexError:
+            self._send_error(400, "Boundary не найден")
+            return
+
+        # Чтение тела запроса
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            if content_length > MAX_FILE_SIZE * 2:
+                self._send_error(413, "Запрос слишком большой")
+                return
+            raw_body = self.rfile.read(content_length)
+        except (TypeError, ValueError):
+            self._send_error(411, "Некорректный Content-Length")
+            return
+        except Exception as e:
+            logging.error(f"Ошибка при чтении тела запроса: {e}")
+            self._send_error(500, "Ошибка при чтении запроса")
+            return
+
+        # Парсинг multipart/form-data
+        file_data, filename = self._parse_multipart(raw_body, boundary)
+        if not file_data or not filename:
+            self._send_error(400, "Файл не найден в запросе")
+            return
+
+        # Проверка файла
+        file_size = len(file_data)
+        file_extension = os.path.splitext(filename)[1].lower()
+
+        if file_extension not in ALLOWED_EXTENSIONS:
+            self._send_error(400, f"Неподдерживаемый формат файла. Допустимы: {', '.join(ALLOWED_EXTENSIONS)}")
+            return
+
+        if file_size > MAX_FILE_SIZE:
+            self._send_error(400, f"Файл превышает максимальный размер {MAX_FILE_SIZE / (1024 * 1024):.0f}MB")
+            return
+
+        # Сохранение файла
+        unique_filename = f"{uuid.uuid4().hex}{file_extension}"
+        target_path = os.path.join(UPLOAD_DIR, unique_filename)
+
+        try:
+            # Сохраняем файл на диск
+            with open(target_path, 'wb') as f:
+                f.write(file_data)
+
+            # Сохраняем метаданные в БД
+            try:
+                new_id = self._save_to_db(unique_filename, filename, file_size, file_extension)
+                file_url = f"/images/{unique_filename}"
+                
+                logging.info(f"Изображение '{filename}' сохранено как '{unique_filename}' (id={new_id})")
+                self._set_headers(200, 'application/json')
+                response = {
+                    "status": "success",
+                    "message": "Файл успешно загружен",
+                    "filename": unique_filename,
+                    "url": file_url,
+                    "id": new_id,
+                    "original_name": filename,
+                    "size": file_size,
+                    "file_type": file_extension.lstrip('.')
+                }
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+            except Exception as db_err:
+                # Откатываем сохранение файла при ошибке БД
+                try:
+                    os.remove(target_path)
+                except Exception:
+                    pass
+                logging.error(f"Ошибка записи метаданных в БД: {db_err}")
+                self._send_error(500, "Ошибка сохранения метаданных в БД")
+        except Exception as e:
+            logging.error(f"Ошибка при сохранении файла '{filename}': {e}")
+            self._send_error(500, "Произошла ошибка при сохранении файла")
+            
+    def _send_error(self, status_code, message):
+        """Вспомогательный метод для отправки ошибок в формате JSON"""
+        self._set_headers(status_code, 'application/json')
+        response = {"status": "error", "message": message}
+        self.wfile.write(json.dumps(response).encode('utf-8'))
+        
+    def _parse_multipart(self, raw_body, boundary):
+        """Парсинг multipart/form-data для извлечения файла"""
+        parts = raw_body.split(b'--' + boundary)
+        for part in parts:
+            if b'Content-Disposition: form-data;' in part and b'filename=' in part:
+                try:
+                    headers_end = part.find(b'\r\n\r\n')
+                    headers_str = part[0:headers_end].decode('utf-8')
+                    
+                    filename_match = re.search(r'filename="([^"]+)"', headers_str)
+                    if filename_match:
+                        filename = filename_match.group(1)
+                        file_data = part[headers_end + 4:].strip()  # +4 для \r\n\r\n
+                        return file_data, filename
+                except Exception as e:
+                    logging.error(f"Ошибка при парсинге части multipart: {e}")
+        return None, None
+        
+    def _save_to_db(self, filename, original_name, size, file_extension):
+        """Сохранение метаданных файла в БД"""
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO images (filename, original_name, size, file_type)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (filename, original_name, size, file_extension.lstrip('.')),
+                )
+                new_id = cursor.fetchone()[0]
+                conn.commit()
+                return new_id
 
 
 def run_server(server_class=http.server.HTTPServer, handler_class=ImageHostingHandler, port=8000):
